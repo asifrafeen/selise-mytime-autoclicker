@@ -1,0 +1,22 @@
+[project]
+name = "python-autoclicker"
+version = "0.1.0"
+description = "MyTime Autoclicker — automated daily timesheet submission"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.58.0",
+    "ttkbootstrap>=1.10.1",
+    "pystray>=0.19.5",
+    "Pillow>=10.0.0",
+    "APScheduler>=3.10,<4",
+    "cryptography>=42.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.0.0",
+]
+
+[tool.uv]
+package = false
