@@ -41,6 +41,7 @@ def _load_icon_image() -> Image.Image:
 
 def start_tray(
     on_show_settings: Callable,
+    on_show_panel: Callable,
     on_run_now: Callable,
     on_quit: Callable,
     root,  # tkinter root — used for root.after() bridging
@@ -54,6 +55,9 @@ def start_tray(
         return wrapper
 
     menu = pystray.Menu(
+        # Default item (bold, activated on left-click / double-click)
+        pystray.MenuItem("Open…", _post(on_show_panel), default=True),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Run Now", _post(on_run_now)),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Settings…", _post(on_show_settings)),

@@ -18,5 +18,11 @@ dev = [
     "pyinstaller>=6.0.0",
 ]
 
+[project.scripts]
+mytime = "autoclicker.main:main"
+
 [tool.uv]
-package = false
+package = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
