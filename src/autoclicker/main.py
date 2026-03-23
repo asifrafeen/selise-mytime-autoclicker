@@ -1,18 +1,19 @@
 """Application entry point.
 
-Sets up Playwright browser path for frozen (PyInstaller) builds,
-enforces single-instance via a lock file, initialises logging,
-then hands control to the UI layer.
+Single-instance + cross-platform IPC via a local TCP socket:
+  - First launch binds the IPC port  → becomes the primary instance.
+  - Subsequent launches connect to it → send "SHOW", then exit.
+  - The primary instance receives "SHOW" and raises its window.
 
-Single-instance behaviour:
-  - First launch acquires a lock file and writes its PID.
-  - Subsequent launches read that PID, send SIGUSR1 to the running process
-    (which brings its window to the front), then exit immediately.
+This works identically on Windows, macOS, and Linux without any
+platform-specific locking (no fcntl, no msvcrt, no SIGUSR1).
 """
 
 import os
 import signal
+import socket
 import sys
+import threading
 from pathlib import Path
 
 # ── Allow running directly as `python src/autoclicker/main.py` ───────────────
@@ -27,86 +28,96 @@ if getattr(sys, "frozen", False):
 
 from autoclicker.logging_setup import setup_logging  # noqa: E402
 from autoclicker.ui.app import create_and_run        # noqa: E402
-from autoclicker.config.paths import get_appdata_dir # noqa: E402
+
+# ── IPC constants ─────────────────────────────────────────────────────────────
+_IPC_HOST = "127.0.0.1"
+_IPC_PORT = 47_381          # arbitrary app-specific port
+_IPC_MSG_SHOW = b"SHOW"
+
+_show_requested = False
+_ipc_server_sock: socket.socket | None = None
 
 
-def _lock_path() -> Path:
-    return get_appdata_dir() / "app.lock"
+# ── Single-instance check ─────────────────────────────────────────────────────
 
-
-def _acquire_lock():
-    """Try to acquire an exclusive lock. Returns file handle on success, None if already locked."""
-    path = _lock_path()
-
-    if sys.platform == "win32":
-        import msvcrt
-        try:
-            fh = open(path, "a+")
-            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-            fh.seek(0); fh.truncate()
-            fh.write(str(os.getpid())); fh.flush()
-            return fh
-        except OSError:
-            fh.close()
-            return None
-    else:
-        import fcntl
-        fh = open(path, "a+")  # "a+" does not truncate — preserves existing PID until we own the lock
-        try:
-            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # We own the lock — now safe to overwrite with our PID
-            fh.seek(0); fh.truncate()
-            fh.write(str(os.getpid())); fh.flush()
-            return fh
-        except OSError:
-            fh.close()
-            return None
+def _try_become_primary() -> bool:
+    """
+    Try to bind the IPC port.
+    Returns True  → we are the first (primary) instance.
+    Returns False → another instance already owns the port.
+    """
+    global _ipc_server_sock
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((_IPC_HOST, _IPC_PORT))
+        sock.listen(5)
+        _ipc_server_sock = sock
+        return True
+    except OSError:
+        sock.close()
+        return False
 
 
 def _signal_existing_instance() -> None:
-    """Read PID from lock file and send SIGUSR1 to bring its window forward."""
+    """Connect to the running instance and ask it to show its window."""
     try:
-        pid_str = _lock_path().read_text().strip()
-        if not pid_str:
-            print("Stale lock file — delete it and relaunch.")
-            _lock_path().unlink(missing_ok=True)
-            return
-        pid = int(pid_str)
-        os.kill(pid, signal.SIGUSR1)
-        print(f"Signalled existing instance (PID {pid}) to show window.")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            s.connect((_IPC_HOST, _IPC_PORT))
+            s.sendall(_IPC_MSG_SHOW)
+        print("MyTime Autoclicker is already running — bringing window to front.")
     except Exception as exc:
-        print(f"Could not signal existing instance: {exc}")
+        print(f"Could not reach existing instance: {exc}")
+        print("If the app is not visible, try restarting it.")
 
 
-_show_requested = False
+# ── IPC server (runs in background thread of primary instance) ────────────────
+
+def _start_ipc_listener() -> None:
+    """Accept SHOW commands from secondary instances (daemon thread)."""
+    def _serve() -> None:
+        global _show_requested, _ipc_server_sock
+        if _ipc_server_sock is None:
+            return
+        _ipc_server_sock.settimeout(1.0)
+        while True:
+            try:
+                conn, _ = _ipc_server_sock.accept()
+                with conn:
+                    data = conn.recv(16)
+                    if data == _IPC_MSG_SHOW:
+                        _show_requested = True
+            except socket.timeout:
+                continue
+            except OSError:
+                break  # socket closed on app exit
+
+    threading.Thread(target=_serve, daemon=True, name="ipc-server").start()
 
 
-def _register_show_signal(window) -> None:
-    """Register SIGUSR1 handler + a polling loop to safely show the window."""
-    if sys.platform == "win32":
-        return  # SIGUSR1 not available on Windows
+# ── Window show-request polling (runs on tk main thread) ─────────────────────
 
-    def _handler(signum, frame):
-        # Signal handlers must not call tk directly — just set a flag
-        global _show_requested
-        _show_requested = True
+def _register_show_handler(window) -> None:
+    """
+    Poll every 250 ms for a show request set by the IPC listener thread.
+    Also wires up Unix suspend/resume signals where available.
+    """
+    global _show_requested
 
-    signal.signal(signal.SIGUSR1, _handler)
+    # Unix: hide on Ctrl+Z suspend, restore on fg/SIGCONT
+    if hasattr(signal, "SIGTSTP"):
+        def _on_suspend(signum, frame):
+            window.after(0, window.withdraw)
+        signal.signal(signal.SIGTSTP, _on_suspend)
 
-    # Hide window on suspend (Ctrl+Z), restore on resume
-    def _on_suspend(signum, frame):
-        global _show_requested
-        window.after(0, window.withdraw)
+    if hasattr(signal, "SIGCONT"):
+        def _on_resume(signum, frame):
+            global _show_requested
+            _show_requested = True
+        signal.signal(signal.SIGCONT, _on_resume)
 
-    def _on_resume(signum, frame):
-        global _show_requested
-        _show_requested = True
-
-    signal.signal(signal.SIGTSTP, _on_suspend)
-    signal.signal(signal.SIGCONT, _on_resume)
-
-    # Poll every 250 ms — when flag is set, bring window forward
-    def _poll():
+    def _poll() -> None:
         global _show_requested
         if _show_requested:
             _show_requested = False
@@ -119,19 +130,24 @@ def _register_show_signal(window) -> None:
     window.after(250, _poll)
 
 
-def main() -> None:
-    lock = _acquire_lock()
+# ── Entry point ───────────────────────────────────────────────────────────────
 
-    if lock is None:
-        # Another instance is running — signal it to show its window
+def main() -> None:
+    if not _try_become_primary():
+        # Another instance is running — signal it and exit
         _signal_existing_instance()
         sys.exit(0)
 
+    # We are the primary instance
+    _start_ipc_listener()
+
     try:
         setup_logging()
-        window = create_and_run(register_signal_fn=_register_show_signal)  # noqa: F841
+        create_and_run(register_signal_fn=_register_show_handler)
     finally:
-        lock.close()
+        # Release the IPC port on exit
+        if _ipc_server_sock:
+            _ipc_server_sock.close()
 
 
 if __name__ == "__main__":
