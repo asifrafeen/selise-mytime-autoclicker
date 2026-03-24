@@ -31,7 +31,7 @@ def create_and_run(register_signal_fn=None) -> None:
         register_signal_fn(_window)
 
     if not is_setup_complete() or not credentials_exist():
-        logger.info("First run — showing setup wizard")
+        logger.info("First run - showing setup wizard")
         SetupWizard(_window, on_complete=lambda: _start_background(_window))
     else:
         _start_background(_window)
@@ -55,20 +55,20 @@ def _start_background(window: MainWindow) -> None:
 
     # Refresh the window display now that credentials are saved
     window.after(0, window._refresh_config)
-    logger.info("App started — scheduled at %02d:%02d", hour, minute)
+    logger.info("App started - scheduled at %02d:%02d", hour, minute)
 
 
 def _run_automation() -> None:
     global _run_thread
     if _run_thread and _run_thread.is_alive():
-        logger.warning("Automation already running — skipping")
+        logger.warning("Automation already running - skipping")
         return
 
     settings = load_settings()
     try:
         username, password = load_credentials()
     except FileNotFoundError:
-        logger.error("No credentials found — skipping run")
+        logger.error("No credentials found - skipping run")
         return
 
     def _job():

@@ -103,7 +103,7 @@ def run_timesheet(username: str, password: str, headless: bool = True) -> None:
             logger.info("Filling General Admin (column %d) with 9 hours", col_index)
             general_admin_input = page.locator(
                 f"table[data-test-id='table-record-list'] tbody tr:first-child "
-                f"td:nth-child({col_index + 1}) input[type='number']"
+                f"td:nth-child({col_index + 2}) input[type='number']"
             )
             general_admin_input.fill("9")
             _check_cancelled()

@@ -1,12 +1,22 @@
 """Configure application-wide logging with rotation."""
 
+import io
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 
 from .config.paths import get_logs_dir
 
 
 def setup_logging() -> None:
+    # Ensure Windows console can handle UTF-8 output
+    if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     log_file = get_logs_dir() / "autoclicker.log"
 
     formatter = logging.Formatter(
@@ -22,7 +32,11 @@ def setup_logging() -> None:
     )
     file_handler.setFormatter(formatter)
 
-    console_handler = logging.StreamHandler()
+    console_handler = logging.StreamHandler(
+        stream=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        if sys.platform == "win32" and hasattr(sys.stdout, "buffer")
+        else None
+    )
     console_handler.setFormatter(formatter)
 
     root_logger = logging.getLogger()

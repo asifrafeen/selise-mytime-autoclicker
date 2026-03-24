@@ -66,7 +66,7 @@ def _signal_existing_instance() -> None:
             s.settimeout(2.0)
             s.connect((_IPC_HOST, _IPC_PORT))
             s.sendall(_IPC_MSG_SHOW)
-        print("MyTime Autoclicker is already running — bringing window to front.")
+        print("MyTime Autoclicker is already running - bringing window to front.")
     except Exception as exc:
         print(f"Could not reach existing instance: {exc}")
         print("If the app is not visible, try restarting it.")

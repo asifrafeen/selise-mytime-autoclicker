@@ -22,7 +22,7 @@ def start(job_fn: Callable, hour: int, minute: int) -> None:
     """Start the scheduler with the given daily job at hour:minute."""
     _scheduler.start()
     _schedule_job(job_fn, hour, minute)
-    logger.info("Scheduler started — job runs Mon–Thu & Sun at %02d:%02d", hour, minute)
+    logger.info("Scheduler started - job runs Mon-Thu & Sun at %02d:%02d", hour, minute)
 
 
 def reschedule(job_fn: Callable, hour: int, minute: int) -> None:
